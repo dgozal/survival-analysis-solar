@@ -1,0 +1,169 @@
+---
+title: 'Survival Analysis: Solar Panel Tax Credits'
+output:
+  pdf_document: default
+  html_document: default
+date: '09 Nov 2022'
+---
+
+I will be using data from the correlates of state policy (http://ippsr.msu.edu/public-policy/correlates-state-policy) for this project. I will be conducting a survival analysis which looks at the likelihood of a state's adoption of some form of tax incentive for residential solar panels. The specific "failure" variable I will be using in this case is "w_environment_solar_taxcredit," which looks at whether a state has some form of tax credit for residential solar installations at various points of time.  
+
+I will include the following variables as well, which may affect a state's decision to enact tax incentives for residential solar panels in the following ways:
+
+  * **real_pc_inc_quar:** This variable measures states' real personal income per capita. A higher income per capita should indicate a wealthier state, which might have more economic resources to invest in renewable energy policies such as tax incentives for solar panels.
+  * **total_debt_outstanding_gsp:** This variable measures states' total outstanding debt as a percentage of its total gross state product (basically the state-level version of GDP). It is possible that states with a higher debt burden may be less inclined to allocate their limited financial resources towards renewable policies such as solar tax credits.
+  * **citi6013:** This measures the average ideology of a state's citizenry, with higher levels indicating a greater tendency towards liberalism and lower levels a greater tendency towards conservatism. In the context of US politics, pro-renewable policies have become much closer tied to liberal compared to conservative platforms, suggesting that states with more liberal populations should be more supportive of policies such as that measured by our dependent variable.
+  * **pro_environment:** Measures the estimated proportion of a state's citizenry who believe that the US as a whole is spending too little on the environment. The higher this figure, the higher the likelihood a state might adopt tax incentives for solar panels. I should note however, that there might be some multicollinearity between this variable and the one measuring poltical ideology above. This should be kept in mind when analyzing our models. 
+  * **oilprod06 + gasprod06:** This essentially measures the total natural gas and oil production of a state. It should be noted that this variable only measures average production across a very specific time period (2000-2006). As such, we will only be treating it as a (very imperfect) proxy of the degree to which fossil fuels form an important part of a state's economy. I should also note that since this value measures fossil fuel production before 2008, it avoids the distorting effects of the shale revolution, where US natural gas production increased dramatically. In any case, the greater a state's fossil fuel production, the greater the potential economic threat it may perceive from renewables, which might dis-incline it from policies such as the one we are trying to measure here.
+  * **solar_potential_adj:** Looks at the solar energy potential of a state by calculating the average solar energy potential per square meter multiplied by the state's total land area. The higher a state's solar energy potential, the more supportive we expect it should be of pro-renewable policies like the one outlined in our dependent variable. I should note that data for this variable is missing for Alaska, which should be adjusted for.
+
+```{r}
+suppressPackageStartupMessages(suppressWarnings(library(tidyverse)))
+suppressPackageStartupMessages(suppressWarnings(library(cspp)))
+suppressPackageStartupMessages(suppressWarnings(library(pscl)))
+
+cspp <- get_cspp_data(vars = c("real_pc_inc_quar", "total_debt_outstanding_gsp", 
+                               "citi6013", "pro_environment", "oilprod06", "gasprod06", 
+                               "solar_potential_adj", "w_environment_solar_taxcredit"))
+```
+
+#### **Data Processing**
+\
+\
+We will first try to match up the time range of our variables. The original dataset only collected data on our dependent variable for the range between 1975 and 2013. As such, I will be using the same time range as my risk window. 1975 was likely selected as the beginning year because this was the start of the period when US states began to offer solar financial incentives in earnest (Sarzynski, 2009). As such, this seems to be an appropriate starting point. It is reasonable to say then, that 1975 marks the "beginning" of the process we are looking at, that is - when states began to seriously consider putting up incentives for solar energy - and should minimize problems arising out of left censoring. Having 2013 as the cutoff point also shouldn't introduce significant right truncation problems, as it simply represents the final date of data collection rather than some form of attrition. Right truncation problems should also be ameliorated by dropping all records for a state once it has "failed," that is, once it has implemented a tax credit for solar panels (more on this below). We will also use all states in the dataset (with the exception of Alaska and DC, for which several key indicators are missing), assuming that they are all eligible for the "failure" we will be studying. We begin by setting up this time range and filtering out states that we won't be using. Additionally, some recoding is also necessary for our dependent variable, since it also measures different types of tax credits (represented by 1 and 2). In this case we merely have to recode every value of 2 to 1: 
+
+```{r}
+cspp_n <- cspp %>% 
+  filter(year > 1974 & year < 2014) %>% 
+  filter(st != 'DC' & st != 'AK') %>%  
+  mutate(solar_tc = ifelse(w_environment_solar_taxcredit == 2, 1, 
+                           w_environment_solar_taxcredit)) %>% 
+  select(-w_environment_solar_taxcredit)
+```
+
+Our next step is to make sure we have equal time ranges for our dependent and independent variables. The following is a list of the available time ranges for each independent variable that we will use (each of which should match our dependent variable's range of 1975-2013) and any related pre-processing measures required:
+
+  * **real_pc_inc_quar:** 1941-2010. We will need to impute the missing values for 2011-2013. Since personal income tends to increase over time, each missing value will be filled by extrapolating from previous years' values using a simple linear trend.
+  * **total_debt_outstanding_gsp:** 1963-2010. We will need to impute the missing values for 2011-2013. Since there is no clear, consistent trend across time for state debt, each imputed value will simply be the average of the previous 5 periods' values.
+  * **citi6013:** 1960-2013. This overlaps with our dependent variable, so no changes are necessary.
+  * **pro_environment:** 1973-2012.  We will need to impute the missing value for 2013. Since there is no clear, consistent trend across time for state debt, each imputed value will simply be the average of the previous 5 periods' values.
+  * **oilprod06 + gasprod06:** Since this will be treated as a static variable, the two variables will only be summed and imputed for all the years in our risk window (the dataset only provides "static" values over the years 2000-2013, all of which represent an average taken for the 2000-2006 period). It should also be noted that states that don't produce any oil or gas have NAs listed in 2000-2013 for this variable, which we will simply replace with 0s.
+  * **solar_potential_adj:** Since this will be treated as a static variable, the two variables will only be summed and imputed for all the years in our risk window (the dataset only provides "static" values over the years 2000-2013, all of which represent a state's "fixed" solar potential).
+  
+```{r}
+# Creating a variable for the amount of time from the beginning of the risk window
+cspp_n <- cspp_n %>% 
+  mutate(nyear = year-1975)
+
+# Processing for real_pc_inc_quar
+p_inc <- cspp_n %>% 
+  select(st, nyear, real_pc_inc_quar) %>% 
+  pivot_wider(names_from = st, values_from = real_pc_inc_quar)
+p_inc_m <- p_inc %>% 
+  drop_na()
+p_inc_cn = colnames(p_inc)
+for (i in 2:ncol(p_inc)) {
+  lm_inc = lm(paste(p_inc_cn[i], '~', 'nyear'), p_inc_m)
+  for (j in (nrow(p_inc)-2):nrow(p_inc)) {
+     pred = predict.lm(lm_inc, p_inc %>% select(nyear))
+     p_inc[j,i] = as.integer(pred[j])
+  }
+}
+p_inc <- p_inc %>%
+  pivot_longer(!nyear, names_to = "st", values_to = "real_pc_inc") 
+cspp_n <- left_join(cspp_n, p_inc, by = c("st", "nyear")) %>% 
+  select(-real_pc_inc_quar)
+
+# Processing for total_debt_outstanding_gsp
+debt <- cspp_n %>% 
+  select(st, nyear, total_debt_outstanding_gsp) %>% 
+  pivot_wider(names_from = st, values_from = total_debt_outstanding_gsp)
+for (i in 2:ncol(debt)) {
+  for (j in (nrow(debt)-2):nrow(debt)) {
+     debt[j,i] = mean(c(as.numeric(debt[j-1,i]), 
+                        as.numeric(debt[j-2,i]), 
+                        as.numeric(debt[j-3,i]), 
+                        as.numeric(debt[j-4,i]), 
+                        as.numeric(debt[j-5,i])))
+  }
+}
+debt <- debt %>%
+  pivot_longer(!nyear, names_to = "st", values_to = "debt") 
+cspp_n <- left_join(cspp_n, debt, by = c("st", "nyear")) %>% 
+  select(-total_debt_outstanding_gsp)
+
+# Processing for pro_environment
+pro_env <- cspp_n %>% 
+  select(st, nyear, pro_environment) %>% 
+  pivot_wider(names_from = st, values_from = pro_environment)
+for (i in 2:ncol(pro_env)) {
+  pro_env[39,i] = mean(c(as.numeric(pro_env[j-1,i]), 
+                         as.numeric(pro_env[j-2,i]), 
+                         as.numeric(pro_env[j-3,i]), 
+                         as.numeric(pro_env[j-4,i]), 
+                         as.numeric(pro_env[j-5,i])))
+}
+pro_env <- pro_env %>%
+  pivot_longer(!nyear, names_to = "st", values_to = "pro_env") 
+cspp_n <- left_join(cspp_n, pro_env, by = c("st", "nyear")) %>% 
+  select(-pro_environment)
+
+# Processing for oilprod06 + gasprod06
+cspp_n <- cspp_n %>% 
+  mutate(oilgas = oilprod06 + gasprod06,
+         oilgas = if_else(year == 2010 & is.na(oilgas), 0, oilgas))
+oilgas <- cspp_n %>% 
+  select(st, nyear, oilgas) %>% 
+  pivot_wider(names_from = st, values_from = oilgas)
+for (i in 2:ncol(oilgas)) {
+  oilgas[,i] = oilgas[36,i]
+}
+oilgas <- oilgas %>%
+  pivot_longer(!nyear, names_to = "st", values_to = "oilgas2") 
+cspp_n <- left_join(cspp_n, oilgas, by = c("st", "nyear")) %>% 
+  select(-oilgas, -oilprod06, -gasprod06)
+
+# Processing for solar_potential_adj
+solar <- cspp_n %>% 
+  select(st, nyear, solar_potential_adj) %>% 
+  pivot_wider(names_from = st, values_from = solar_potential_adj)
+for (i in 2:ncol(solar)) {
+  solar[,i] = solar[36,i]
+}
+solar <- solar %>%
+  pivot_longer(!nyear, names_to = "st", values_to = "solar") 
+cspp_n <- left_join(cspp_n, solar, by = c("st", "nyear")) %>% 
+  select(-solar_potential_adj)
+```
+
+Our next step would be to remove states that have already enacted tax incentives for solar panels at the beginning of our risk window. I would also have to remove all records for years after which a specific state has already implemented a tax incentive.
+
+```{r}
+# Remove states with solar tax incentives at the beginning of our risk window
+cspp_n <- cspp_n %>% 
+  mutate(drop = ifelse(solar_tc == 1 & nyear == 0, 1, 0))
+drop_1 <- aggregate(drop ~ st, data = cspp_n, max) %>% 
+  filter(drop == 1)
+cspp_n <- cspp_n %>%
+  filter(!st %in% drop_1$st)
+
+# Remove all remaining records after a state has implemented a solar tax incentive
+cspp_n <- cspp_n %>% 
+  arrange(st, nyear) %>% 
+  mutate(drop2 = ifelse(solar_tc == 1 & lag(solar_tc,1) == 1, 1, 0)) %>% 
+  filter(drop2 == 0)
+```
+
+#### **Regression Modelling**
+\
+\
+With data processing out of the way, we can now move on to running our logit regression. I used the same variables as above, with the addition of an interaction variable between time and real personal income per capita, which we had previously observed to have a tendency to increase over time. I also calculated a McFadden's pseudo R-squared as a rough approximation of the model's fit:
+
+```{r}
+lm_solar2 <- glm(solar_tc ~ nyear + citi6013 + real_pc_inc + debt + pro_env + oilgas2
+                 + solar + real_pc_inc * nyear, cspp_n, family = "binomial")
+summary(lm_solar2)
+pR2(lm_solar2)["McFadden"]
+```
+Looking at the p-values of our model, it appears that most of the variables we were looking at don't appear to be very statistical significant. Of all the variables, only citi6013, which measures how liberal or conservative a state's population is, seems to demonstrate a meaningful degree of statistical significance. The relationship observed is as expected, with every 1 point increase in how liberal a state's populace scores on the variable's scale correlating with an increase of 0.03455 in the logit of whether it has passed a solar tax incentive or not. In other words, more liberal states appear to be more inclined towards passing policies that could spur the adoption of renewable energy. All in all then, it appears that more than economic factors, political ideology appears to be the most salient driver of solar tax credit adoption (a proxy of a state's inclination to push for pro-renewable policies). There are some parallels between this and findings in existing literature (Lyon and Yin, 2010; Berry et al., 2015; Carley and Miller, 2012), which suggest that political factors are the dominant predictors of state climate policy. Of course, it should be stressed that this model only looks at tax credits. The interaction between our independent variables and other forms of pro-renewable policies might be different. 
+
