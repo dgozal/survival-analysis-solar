@@ -7,4 +7,4 @@ A nifty way of approaching this is to use survival analysis, which is usually us
 The above is implemented using R, and is a slightly modified version of previous coursework I did in college. 
 
 ## Instructions
-You will only need the R Markdown and csv file attached to re-run my analysis. Detailed explanations are provided in the R Markdown file attached. Data from the correlates of state policy are downloaded through their API, which is directly incorporated in the attached Markdown file.
+You will only need the R Markdown and csv file attached to re-run my analysis. Detailed explanations are provided in the R Markdown file attached. Data from the correlates of state policy are downloaded through their API, which is directly incorporated in the attached Markdown file (the attached csv contains data from other sources to fill in missing values).
