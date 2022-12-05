@@ -4,4 +4,7 @@ Not everyone feels the same way about the pace of adopting renewables. Some want
 
 A nifty way of approaching this is to use survival analysis, which is usually used to model the chances at which certain entities will continue to "survive" as time passes. By designating "survival" here as a continuation of the status quo - that is, no solar panel tax credits (in which case "death" is simply the implementation of solar tax credits) - we can use survival analysis to study the determinants of state behavior in when it chooses to implement this piece of policy (if it ever does).
 
-The above is implemented using R, and is a slightly modified version of previous coursework I did in college. Detailed explanations are provided in the R Markdown file attached.
+The above is implemented using R, and is a slightly modified version of previous coursework I did in college. 
+
+### Instructions
+You will only need the R Markdown and csv files attached to re-run my analysis. Detailed explanations are provided in the R Markdown file attached.
