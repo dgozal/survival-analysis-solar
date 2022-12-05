@@ -6,5 +6,5 @@ A nifty way of approaching this is to use survival analysis, which is usually us
 
 The above is implemented using R, and is a slightly modified version of previous coursework I did in college. 
 
-### Instructions
+## Instructions
 You will only need the R Markdown and csv files attached to re-run my analysis. Detailed explanations are provided in the R Markdown file attached.
